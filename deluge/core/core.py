@@ -675,6 +675,53 @@ class Core(component.Component):
             log.warning('Error adding peer %s:%s to %s', ip, port, torrent_id)
 
     @export
+    def set_ssl_torrent_cert(
+        self,
+        torrent_id: str,
+        certificate: str,
+        private_key: str,
+        dh_params: str,
+        save_to_disk: bool = True,
+    ):
+        """
+        Set the SSL certificates used to connect to SSL peers of the given torrent.
+        """
+        log.debug('adding ssl certificate to %s', torrent_id)
+        if save_to_disk:
+            (
+                crt_file,
+                key_file,
+                dh_params_file,
+            ) = self.torrentmanager.ssl_file_paths_for_torrent(torrent_id)
+
+            for file, content in (
+                (crt_file, certificate),
+                (key_file, private_key),
+                (dh_params_file, dh_params),
+            ):
+                try:
+                    with open(file, 'w') as f:
+                        f.write(content)
+                except OSError as err:
+                    log.warning('Error writing file %f to disk: %s', file, err)
+                    return
+
+            if not self.torrentmanager[torrent_id].set_ssl_certificate(
+                str(crt_file), str(key_file), str(dh_params_file)
+            ):
+                log.warning('Error adding certificate to %s', torrent_id)
+        else:
+            try:
+                if not self.torrentmanager[torrent_id].set_ssl_certificate_buffer(
+                    certificate, private_key, dh_params
+                ):
+                    log.warning('Error adding certificate to %s', torrent_id)
+            except AttributeError:
+                log.warning(
+                    'libtorrent version >=2.0.10 required to set ssl torrent cert without writing to disk'
+                )
+
+    @export
     def move_storage(self, torrent_ids: List[str], dest: str):
         log.debug('Moving storage %s to %s', torrent_ids, dest)
         for torrent_id in torrent_ids:
@@ -820,6 +867,17 @@ class Core(component.Component):
     def get_listen_port(self) -> int:
         """Returns the active listen port"""
         return self.session.listen_port()
+
+    @export
+    def get_ssl_listen_port(self) -> int:
+        """Returns the active SSL listen port"""
+        try:
+            return self.session.ssl_listen_port()
+        except AttributeError:
+            log.warning(
+                'libtorrent version >=2.0.10 required to get active SSL listen port'
+            )
+        return -1
 
     @export
     def get_proxy(self) -> Dict[str, Any]:
@@ -999,6 +1057,7 @@ class Core(component.Component):
         trackers=None,
         add_to_session=False,
         torrent_format=metafile.TorrentFormat.V1,
+        ca_cert=None,
     ):
         if isinstance(torrent_format, str):
             torrent_format = metafile.TorrentFormat(torrent_format)
@@ -1017,6 +1076,7 @@ class Core(component.Component):
             trackers=trackers,
             add_to_session=add_to_session,
             torrent_format=torrent_format,
+            ca_cert=ca_cert,
         )
 
     def _create_torrent_thread(
@@ -1032,6 +1092,7 @@ class Core(component.Component):
         trackers,
         add_to_session,
         torrent_format,
+        ca_cert,
     ):
         from deluge import metafile
 
@@ -1045,6 +1106,7 @@ class Core(component.Component):
             created_by=created_by,
             trackers=trackers,
             torrent_format=torrent_format,
+            ca_cert=ca_cert,
         )
 
         write_file = False
